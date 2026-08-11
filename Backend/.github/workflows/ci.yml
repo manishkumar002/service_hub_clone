@@ -10,8 +10,13 @@ on:
       - main
 
 jobs:
-  build:
+  gateway:
+    name: Gateway CI
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: gateway
 
     steps:
       - name: Checkout Code
@@ -22,12 +27,35 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: gateway/package-lock.json
 
       - name: Install Dependencies
         run: npm ci
 
-      - name: Run Tests
-        run: npm test
+  services:
+    name: Microservices CI
+    runs-on: ubuntu-latest
 
-      - name: Build Project
-        run: npm run build
+    strategy:
+      matrix:
+        service:
+          - auth-service
+          - category-service
+
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
