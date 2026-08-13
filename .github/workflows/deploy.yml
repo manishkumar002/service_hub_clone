@@ -13,7 +13,8 @@ jobs:
   deploy:
     name: Deploy to Production
 
-    # Run deployment only when CI succeeds
+    # Deploy only when CI was successful
+    # and CI was triggered by push
     if: >
       ${{ github.event.workflow_run.conclusion == 'success'
       && github.event.workflow_run.event == 'push' }}
@@ -22,7 +23,7 @@ jobs:
 
     steps:
       # ==========================================
-      # 1. Checkout latest master code
+      # 1. Checkout latest master
       # ==========================================
       - name: Checkout Code
         uses: actions/checkout@v5
@@ -34,7 +35,9 @@ jobs:
       # ==========================================
       - name: Verify Project Structure
         run: |
-          echo "Checking project structure..."
+          echo "======================================"
+          echo "VERIFYING PROJECT STRUCTURE"
+          echo "======================================"
 
           test -d Backend/gateway
           test -d Backend/services/auth-service
@@ -51,7 +54,9 @@ jobs:
       # ==========================================
       - name: Create Deployment Package
         run: |
-          echo "Creating deployment package..."
+          echo "======================================"
+          echo "CREATING DEPLOYMENT PACKAGE"
+          echo "======================================"
 
           tar \
             --exclude='.git' \
@@ -60,7 +65,7 @@ jobs:
             --exclude='*.log' \
             -czf deploy.tar.gz Backend
 
-          echo "Package created successfully."
+          echo "Deployment package created."
 
           ls -lh deploy.tar.gz
 
@@ -104,7 +109,7 @@ jobs:
             echo "======================================"
 
             # ======================================
-            # Load Node.js from NVM
+            # Load Node.js
             # ======================================
 
             echo "Loading Node.js..."
@@ -145,10 +150,10 @@ jobs:
             whoami
 
             # ======================================
-            # Project directory
+            # CloudPanel project directory
             # ======================================
 
-            PROJECT_DIR="/var/www/service_hub_clone"
+            PROJECT_DIR="/home/api/htdocs/api.ilearnings.in"
 
             echo "Project directory:"
             echo "$PROJECT_DIR"
@@ -169,10 +174,12 @@ jobs:
             echo "Deployment package found."
 
             # ======================================
-            # Prepare temporary deployment directory
+            # Prepare new deployment
             # ======================================
 
-            echo "Preparing temporary deployment..."
+            echo "======================================"
+            echo "PREPARING NEW DEPLOYMENT"
+            echo "======================================"
 
             rm -rf Backend_new
 
@@ -187,10 +194,12 @@ jobs:
             echo "New code extracted."
 
             # ======================================
-            # Verify new application structure
+            # Verify new code
             # ======================================
 
-            echo "Verifying application structure..."
+            echo "======================================"
+            echo "VERIFYING NEW CODE"
+            echo "======================================"
 
             test -d Backend_new/gateway
             test -d Backend_new/services/auth-service
@@ -200,7 +209,42 @@ jobs:
             test -f Backend_new/services/auth-service/package-lock.json
             test -f Backend_new/services/category-service/package-lock.json
 
-            echo "Application structure verified."
+            echo "New application structure verified."
+
+            # ======================================
+            # Preserve existing .env files
+            # ======================================
+
+            echo "======================================"
+            echo "PRESERVING PRODUCTION ENV FILES"
+            echo "======================================"
+
+            if [ -f "$PROJECT_DIR/Backend/gateway/.env" ]; then
+              cp "$PROJECT_DIR/Backend/gateway/.env" \
+                 "$PROJECT_DIR/Backend_new/gateway/.env"
+
+              echo "Gateway .env preserved."
+            else
+              echo "WARNING: Gateway .env not found."
+            fi
+
+            if [ -f "$PROJECT_DIR/Backend/services/auth-service/.env" ]; then
+              cp "$PROJECT_DIR/Backend/services/auth-service/.env" \
+                 "$PROJECT_DIR/Backend_new/services/auth-service/.env"
+
+              echo "Auth service .env preserved."
+            else
+              echo "WARNING: Auth service .env not found."
+            fi
+
+            if [ -f "$PROJECT_DIR/Backend/services/category-service/.env" ]; then
+              cp "$PROJECT_DIR/Backend/services/category-service/.env" \
+                 "$PROJECT_DIR/Backend_new/services/category-service/.env"
+
+              echo "Category service .env preserved."
+            else
+              echo "WARNING: Category service .env not found."
+            fi
 
             # ======================================
             # Install Gateway dependencies
@@ -215,7 +259,7 @@ jobs:
             npm ci --omit=dev
 
             # ======================================
-            # Install Auth Service dependencies
+            # Install Auth dependencies
             # ======================================
 
             echo "======================================"
@@ -227,7 +271,7 @@ jobs:
             npm ci --omit=dev
 
             # ======================================
-            # Install Category Service dependencies
+            # Install Category dependencies
             # ======================================
 
             echo "======================================"
@@ -239,11 +283,11 @@ jobs:
             npm ci --omit=dev
 
             # ======================================
-            # Replace old Backend
+            # Backup current Backend
             # ======================================
 
             echo "======================================"
-            echo "UPDATING APPLICATION FILES"
+            echo "BACKING UP CURRENT APPLICATION"
             echo "======================================"
 
             cd "$PROJECT_DIR"
@@ -252,11 +296,32 @@ jobs:
 
             if [ -d Backend ]; then
               mv Backend Backend_old
+              echo "Previous Backend backed up."
             fi
+
+            # ======================================
+            # Activate new Backend
+            # ======================================
+
+            echo "======================================"
+            echo "ACTIVATING NEW APPLICATION"
+            echo "======================================"
 
             mv Backend_new Backend
 
-            echo "Application files updated."
+            echo "New Backend activated."
+
+            # ======================================
+            # Set CloudPanel ownership
+            # ======================================
+
+            echo "======================================"
+            echo "SETTING FILE OWNERSHIP"
+            echo "======================================"
+
+            chown -R api:clp "$PROJECT_DIR/Backend"
+
+            echo "Ownership updated."
 
             # ======================================
             # Restart Gateway
@@ -268,8 +333,11 @@ jobs:
 
             cd "$PROJECT_DIR/Backend/gateway"
 
-            pm2 restart gateway || \
-            pm2 start npm --name gateway -- start
+            pm2 restart gateway --update-env || \
+            pm2 start npm \
+              --name gateway \
+              --cwd "$PROJECT_DIR/Backend/gateway" \
+              -- start
 
             # ======================================
             # Restart Auth Service
@@ -281,8 +349,11 @@ jobs:
 
             cd "$PROJECT_DIR/Backend/services/auth-service"
 
-            pm2 restart auth-service || \
-            pm2 start npm --name auth-service -- start
+            pm2 restart auth-service --update-env || \
+            pm2 start npm \
+              --name auth-service \
+              --cwd "$PROJECT_DIR/Backend/services/auth-service" \
+              -- start
 
             # ======================================
             # Restart Category Service
@@ -294,8 +365,11 @@ jobs:
 
             cd "$PROJECT_DIR/Backend/services/category-service"
 
-            pm2 restart category-service || \
-            pm2 start npm --name category-service -- start
+            pm2 restart category-service --update-env || \
+            pm2 start npm \
+              --name category-service \
+              --cwd "$PROJECT_DIR/Backend/services/category-service" \
+              -- start
 
             # ======================================
             # Save PM2
@@ -318,8 +392,18 @@ jobs:
             pm2 status
 
             # ======================================
-            # Deployment completed
+            # Final verification
             # ======================================
+
+            echo "======================================"
+            echo "VERIFYING APPLICATION"
+            echo "======================================"
+
+            test -d "$PROJECT_DIR/Backend/gateway"
+            test -d "$PROJECT_DIR/Backend/services/auth-service"
+            test -d "$PROJECT_DIR/Backend/services/category-service"
+
+            echo "Application directories verified."
 
             echo "======================================"
             echo "DEPLOYMENT COMPLETED SUCCESSFULLY"
