@@ -13,9 +13,7 @@ jobs:
   deploy:
     name: Deploy to Production
 
-    # Deploy only when:
-    # 1. CI was successful
-    # 2. CI was triggered by a push
+    # Deploy only when CI succeeds
     if: >
       ${{ github.event.workflow_run.conclusion == 'success'
       && github.event.workflow_run.event == 'push' }}
@@ -27,15 +25,34 @@ jobs:
       # 1. Checkout latest master code
       # ==========================================
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: master
 
       # ==========================================
-      # 2. Create deployment package
+      # 2. Check project structure
+      # ==========================================
+      - name: Verify Project Structure
+        run: |
+          echo "Checking project structure..."
+
+          test -d Backend/gateway
+          test -d Backend/services/auth-service
+          test -d Backend/services/category-service
+
+          test -f Backend/gateway/package-lock.json
+          test -f Backend/services/auth-service/package-lock.json
+          test -f Backend/services/category-service/package-lock.json
+
+          echo "Project structure is valid."
+
+      # ==========================================
+      # 3. Create deployment package
       # ==========================================
       - name: Create Deployment Package
         run: |
+          echo "Creating deployment package..."
+
           tar \
             --exclude='.git' \
             --exclude='node_modules' \
@@ -43,10 +60,14 @@ jobs:
             --exclude='*.log' \
             -czf deploy.tar.gz Backend
 
+          echo "Package created successfully."
+
+          ls -lh deploy.tar.gz
+
       # ==========================================
-      # 3. Upload package to server
+      # 4. Upload package to server
       # ==========================================
-      - name: Upload Package to Server
+      - name: Upload Package To Server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -57,8 +78,11 @@ jobs:
           source: "deploy.tar.gz"
           target: "/tmp"
 
+          timeout: 60s
+          command_timeout: 5m
+
       # ==========================================
-      # 4. Connect to server and deploy
+      # 5. Deploy application on server
       # ==========================================
       - name: Deploy Application
         uses: appleboy/ssh-action@v1.2.2
@@ -68,27 +92,77 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
 
+          timeout: 60s
+          command_timeout: 10m
+
           script: |
 
             set -e
 
-            echo "===================================="
-            echo "Starting Production Deployment"
-            echo "===================================="
+            echo "======================================"
+            echo "   STARTING PRODUCTION DEPLOYMENT"
+            echo "======================================"
 
-            # ------------------------------------
-            # Create project directory
-            # ------------------------------------
+            # ======================================
+            # Server information
+            # ======================================
 
-            mkdir -p /var/www/service_hub_clone
+            echo "Server:"
+            hostname
 
-            cd /var/www/service_hub_clone
+            echo "User:"
+            whoami
 
-            # ------------------------------------
+            echo "Node version:"
+            node -v
+
+            echo "NPM version:"
+            npm -v
+
+            echo "PM2 version:"
+            pm2 -v
+
+            # ======================================
+            # Project directory
+            # ======================================
+
+            PROJECT_DIR="/var/www/service_hub_clone"
+
+            echo "Project directory:"
+            echo "$PROJECT_DIR"
+
+            mkdir -p "$PROJECT_DIR"
+
+            # ======================================
+            # Check uploaded package
+            # ======================================
+
+            if [ ! -f /tmp/deploy.tar.gz ]; then
+              echo "ERROR: deploy.tar.gz not found!"
+              exit 1
+            fi
+
+            echo "Deployment package found."
+
+            # ======================================
+            # Backup current Backend
+            # ======================================
+
+            cd "$PROJECT_DIR"
+
+            if [ -d Backend ]; then
+              echo "Existing Backend directory found."
+              echo "Creating backup..."
+
+              rm -rf Backend_backup
+              mv Backend Backend_backup
+            fi
+
+            # ======================================
             # Extract new code
-            # ------------------------------------
+            # ======================================
 
-            echo "Extracting deployment package..."
+            echo "Extracting new code..."
 
             tar -xzf /tmp/deploy.tar.gz
 
@@ -96,75 +170,122 @@ jobs:
 
             echo "Code extracted successfully."
 
-            # ------------------------------------
+            # ======================================
+            # Verify extracted structure
+            # ======================================
+
+            if [ ! -d "$PROJECT_DIR/Backend/gateway" ]; then
+              echo "ERROR: Gateway directory not found!"
+              exit 1
+            fi
+
+            if [ ! -d "$PROJECT_DIR/Backend/services/auth-service" ]; then
+              echo "ERROR: Auth service directory not found!"
+              exit 1
+            fi
+
+            if [ ! -d "$PROJECT_DIR/Backend/services/category-service" ]; then
+              echo "ERROR: Category service directory not found!"
+              exit 1
+            fi
+
+            echo "Application structure verified."
+
+            # ======================================
             # Gateway
-            # ------------------------------------
+            # ======================================
 
-            echo "Installing Gateway dependencies..."
+            echo "======================================"
+            echo "Installing Gateway dependencies"
+            echo "======================================"
 
-            cd /var/www/service_hub_clone/Backend/gateway
+            cd "$PROJECT_DIR/Backend/gateway"
 
             npm ci --omit=dev
 
-            # ------------------------------------
+            # ======================================
             # Auth Service
-            # ------------------------------------
+            # ======================================
 
-            echo "Installing Auth Service dependencies..."
+            echo "======================================"
+            echo "Installing Auth Service dependencies"
+            echo "======================================"
 
-            cd /var/www/service_hub_clone/Backend/services/auth-service
+            cd "$PROJECT_DIR/Backend/services/auth-service"
 
             npm ci --omit=dev
 
-            # ------------------------------------
+            # ======================================
             # Category Service
-            # ------------------------------------
+            # ======================================
 
-            echo "Installing Category Service dependencies..."
+            echo "======================================"
+            echo "Installing Category Service dependencies"
+            echo "======================================"
 
-            cd /var/www/service_hub_clone/Backend/services/category-service
+            cd "$PROJECT_DIR/Backend/services/category-service"
 
             npm ci --omit=dev
 
-            # ------------------------------------
+            # ======================================
             # Restart Gateway
-            # ------------------------------------
+            # ======================================
 
-            echo "Restarting Gateway..."
+            echo "======================================"
+            echo "Restarting Gateway"
+            echo "======================================"
 
-            cd /var/www/service_hub_clone/Backend/gateway
+            cd "$PROJECT_DIR/Backend/gateway"
 
             pm2 restart gateway || \
             pm2 start npm --name gateway -- start
 
-            # ------------------------------------
+            # ======================================
             # Restart Auth Service
-            # ------------------------------------
+            # ======================================
 
-            echo "Restarting Auth Service..."
+            echo "======================================"
+            echo "Restarting Auth Service"
+            echo "======================================"
 
-            cd /var/www/service_hub_clone/Backend/services/auth-service
+            cd "$PROJECT_DIR/Backend/services/auth-service"
 
             pm2 restart auth-service || \
             pm2 start npm --name auth-service -- start
 
-            # ------------------------------------
+            # ======================================
             # Restart Category Service
-            # ------------------------------------
+            # ======================================
 
-            echo "Restarting Category Service..."
+            echo "======================================"
+            echo "Restarting Category Service"
+            echo "======================================"
 
-            cd /var/www/service_hub_clone/Backend/services/category-service
+            cd "$PROJECT_DIR/Backend/services/category-service"
 
             pm2 restart category-service || \
             pm2 start npm --name category-service -- start
 
-            # ------------------------------------
-            # Save PM2 process list
-            # ------------------------------------
+            # ======================================
+            # Save PM2
+            # ======================================
+
+            echo "======================================"
+            echo "Saving PM2 process list"
+            echo "======================================"
 
             pm2 save
 
-            echo "===================================="
-            echo "Deployment Completed Successfully"
-            echo "===================================="
+            # ======================================
+            # Verify PM2
+            # ======================================
+
+            echo "======================================"
+            echo "PM2 STATUS"
+            echo "======================================"
+
+            pm2 status
+
+            echo "======================================"
+            echo "DEPLOYMENT COMPLETED SUCCESSFULLY"
+            echo "======================================"
