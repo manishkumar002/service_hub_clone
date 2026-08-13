@@ -11,7 +11,9 @@ app.use(helmet());
 app.use(morgan("dev"));
 
 app.get("/", (req, res) => {
-  res.send("Gateway Running CI/CD Production Deployment 🙂🚀");
+  res.send(
+    "🚀 Gateway Running Successfully | CI/CD Production Deployment | Gateway + Auth + Category Services LIVE 🎉",
+  );
 });
 
 app.use("/api", routes);
