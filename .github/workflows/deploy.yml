@@ -13,8 +13,6 @@ jobs:
   deploy:
     name: Deploy to Production
 
-    # Deploy only when CI was successful
-    # and CI was triggered by push
     if: >
       ${{ github.event.workflow_run.conclusion == 'success'
       && github.event.workflow_run.event == 'push' }}
@@ -23,21 +21,24 @@ jobs:
 
     steps:
       # ==========================================
-      # 1. Checkout latest master
+      # 1. Checkout exact code that passed CI
       # ==========================================
+
       - name: Checkout Code
         uses: actions/checkout@v5
         with:
-          ref: master
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       # ==========================================
-      # 2. Verify project structure
+      # 2. Verify project
       # ==========================================
+
       - name: Verify Project Structure
         run: |
-          echo "======================================"
-          echo "VERIFYING PROJECT STRUCTURE"
-          echo "======================================"
+
+          set -e
+
+          echo "Checking project structure..."
 
           test -d Backend/gateway
           test -d Backend/services/auth-service
@@ -47,57 +48,73 @@ jobs:
           test -f Backend/services/auth-service/package-lock.json
           test -f Backend/services/category-service/package-lock.json
 
-          echo "Project structure is valid."
+          echo "Project structure OK."
 
       # ==========================================
       # 3. Create deployment package
       # ==========================================
+
       - name: Create Deployment Package
         run: |
-          echo "======================================"
-          echo "CREATING DEPLOYMENT PACKAGE"
-          echo "======================================"
+
+          set -e
+
+          echo "Creating deployment package..."
 
           tar \
             --exclude='.git' \
             --exclude='node_modules' \
             --exclude='.env' \
+            --exclude='.env.*' \
             --exclude='*.log' \
             -czf deploy.tar.gz Backend
 
-          echo "Deployment package created."
-
           ls -lh deploy.tar.gz
 
+          echo "Package created successfully."
+
       # ==========================================
-      # 4. Upload package to server
+      # 4. Upload to server
       # ==========================================
+
       - name: Upload Package To Server
         uses: appleboy/scp-action@v0.1.7
+
         with:
           host: ${{ secrets.SERVER_HOST }}
+
           username: ${{ secrets.SERVER_USER }}
+
           key: ${{ secrets.SERVER_SSH_KEY }}
+
           port: ${{ secrets.SERVER_PORT }}
 
           source: "deploy.tar.gz"
+
           target: "/tmp"
 
           timeout: 60s
+
           command_timeout: 5m
 
       # ==========================================
-      # 5. Deploy application
+      # 5. Deploy
       # ==========================================
+
       - name: Deploy Application
         uses: appleboy/ssh-action@v1.2.2
+
         with:
           host: ${{ secrets.SERVER_HOST }}
+
           username: ${{ secrets.SERVER_USER }}
+
           key: ${{ secrets.SERVER_SSH_KEY }}
+
           port: ${{ secrets.SERVER_PORT }}
 
           timeout: 60s
+
           command_timeout: 15m
 
           script: |
@@ -109,77 +126,53 @@ jobs:
             echo "======================================"
 
             # ======================================
-            # Load Node.js
+            # Node.js
             # ======================================
-
-            echo "Loading Node.js..."
 
             export NVM_DIR="/root/.nvm"
+
             export PATH="/root/.nvm/versions/node/v22.20.0/bin:$PATH"
 
-            echo "Node path:"
-            which node
-
-            echo "Node version:"
+            echo "Node:"
             node -v
 
-            echo "NPM path:"
-            which npm
-
-            echo "NPM version:"
+            echo "NPM:"
             npm -v
 
-            echo "PM2 path:"
-            which pm2
-
-            echo "PM2 version:"
+            echo "PM2:"
             pm2 -v
 
-            # ======================================
-            # Server information
-            # ======================================
-
-            echo "======================================"
-            echo "SERVER INFORMATION"
-            echo "======================================"
-
-            echo "Hostname:"
-            hostname
-
-            echo "User:"
-            whoami
 
             # ======================================
-            # CloudPanel project directory
+            # Project directory
             # ======================================
 
             PROJECT_DIR="/home/api/htdocs/api.ilearnings.in"
 
-            echo "Project directory:"
+            echo "Project:"
             echo "$PROJECT_DIR"
 
             mkdir -p "$PROJECT_DIR"
 
             cd "$PROJECT_DIR"
 
+
             # ======================================
-            # Check deployment package
+            # Check package
             # ======================================
 
             if [ ! -f /tmp/deploy.tar.gz ]; then
+
               echo "ERROR: deploy.tar.gz not found!"
+
               exit 1
+
             fi
 
-            echo "Deployment package found."
 
             # ======================================
             # Prepare new deployment
             # ======================================
-
-            echo "======================================"
-            echo "PREPARING NEW DEPLOYMENT"
-            echo "======================================"
 
             rm -rf Backend_new
 
@@ -191,198 +184,171 @@ jobs:
 
             rm -f /tmp/deploy.tar.gz
 
-            echo "New code extracted."
 
             # ======================================
             # Verify new code
             # ======================================
 
-            echo "======================================"
-            echo "VERIFYING NEW CODE"
-            echo "======================================"
-
             test -d Backend_new/gateway
+
             test -d Backend_new/services/auth-service
+
             test -d Backend_new/services/category-service
 
-            test -f Backend_new/gateway/package-lock.json
-            test -f Backend_new/services/auth-service/package-lock.json
-            test -f Backend_new/services/category-service/package-lock.json
-
-            echo "New application structure verified."
 
             # ======================================
-            # Preserve existing .env files
+            # Preserve Gateway .env
             # ======================================
 
-            echo "======================================"
-            echo "PRESERVING PRODUCTION ENV FILES"
-            echo "======================================"
+            if [ -f Backend/gateway/.env ]; then
 
-            if [ -f "$PROJECT_DIR/Backend/gateway/.env" ]; then
-              cp "$PROJECT_DIR/Backend/gateway/.env" \
-                 "$PROJECT_DIR/Backend_new/gateway/.env"
+              cp \
+                Backend/gateway/.env \
+                Backend_new/gateway/.env
 
-              echo "Gateway .env preserved."
-            else
-              echo "WARNING: Gateway .env not found."
             fi
 
-            if [ -f "$PROJECT_DIR/Backend/services/auth-service/.env" ]; then
-              cp "$PROJECT_DIR/Backend/services/auth-service/.env" \
-                 "$PROJECT_DIR/Backend_new/services/auth-service/.env"
-
-              echo "Auth service .env preserved."
-            else
-              echo "WARNING: Auth service .env not found."
-            fi
-
-            if [ -f "$PROJECT_DIR/Backend/services/category-service/.env" ]; then
-              cp "$PROJECT_DIR/Backend/services/category-service/.env" \
-                 "$PROJECT_DIR/Backend_new/services/category-service/.env"
-
-              echo "Category service .env preserved."
-            else
-              echo "WARNING: Category service .env not found."
-            fi
 
             # ======================================
-            # Install Gateway dependencies
+            # Preserve Auth .env
             # ======================================
 
-            echo "======================================"
-            echo "INSTALLING GATEWAY DEPENDENCIES"
-            echo "======================================"
+            if [ -f Backend/services/auth-service/.env ]; then
+
+              cp \
+                Backend/services/auth-service/.env \
+                Backend_new/services/auth-service/.env
+
+            fi
+
+
+            # ======================================
+            # Preserve Category .env
+            # ======================================
+
+            if [ -f Backend/services/category-service/.env ]; then
+
+              cp \
+                Backend/services/category-service/.env \
+                Backend_new/services/category-service/.env
+
+            fi
+
+
+            # ======================================
+            # Install Gateway
+            # ======================================
 
             cd "$PROJECT_DIR/Backend_new/gateway"
 
             npm ci --omit=dev
 
-            # ======================================
-            # Install Auth dependencies
-            # ======================================
 
-            echo "======================================"
-            echo "INSTALLING AUTH SERVICE DEPENDENCIES"
-            echo "======================================"
+            # ======================================
+            # Install Auth
+            # ======================================
 
             cd "$PROJECT_DIR/Backend_new/services/auth-service"
 
             npm ci --omit=dev
 
-            # ======================================
-            # Install Category dependencies
-            # ======================================
 
-            echo "======================================"
-            echo "INSTALLING CATEGORY SERVICE DEPENDENCIES"
-            echo "======================================"
+            # ======================================
+            # Install Category
+            # ======================================
 
             cd "$PROJECT_DIR/Backend_new/services/category-service"
 
             npm ci --omit=dev
 
-            # ======================================
-            # Backup current Backend
-            # ======================================
 
-            echo "======================================"
-            echo "BACKING UP CURRENT APPLICATION"
-            echo "======================================"
+            # ======================================
+            # Backup old application
+            # ======================================
 
             cd "$PROJECT_DIR"
 
             rm -rf Backend_old
 
             if [ -d Backend ]; then
+
               mv Backend Backend_old
-              echo "Previous Backend backed up."
+
             fi
 
-            # ======================================
-            # Activate new Backend
-            # ======================================
 
-            echo "======================================"
-            echo "ACTIVATING NEW APPLICATION"
-            echo "======================================"
+            # ======================================
+            # Activate new application
+            # ======================================
 
             mv Backend_new Backend
 
-            echo "New Backend activated."
 
             # ======================================
-            # Set CloudPanel ownership
+            # Permissions
             # ======================================
-
-            echo "======================================"
-            echo "SETTING FILE OWNERSHIP"
-            echo "======================================"
 
             chown -R api:clp "$PROJECT_DIR/Backend"
 
-            echo "Ownership updated."
 
             # ======================================
-            # Restart Gateway
+            # DELETE OLD PM2 PROCESSES
             # ======================================
 
-            echo "======================================"
-            echo "RESTARTING GATEWAY"
-            echo "======================================"
+            echo "Deleting old PM2 processes..."
 
-            cd "$PROJECT_DIR/Backend/gateway"
+            pm2 delete gateway || true
 
-            pm2 restart gateway --update-env || \
+            pm2 delete auth-service || true
+
+            pm2 delete category-service || true
+
+
+            # ======================================
+            # START GATEWAY
+            # ======================================
+
+            echo "Starting Gateway..."
+
             pm2 start npm \
               --name gateway \
               --cwd "$PROJECT_DIR/Backend/gateway" \
               -- start
 
+
             # ======================================
-            # Restart Auth Service
+            # START AUTH SERVICE
             # ======================================
 
-            echo "======================================"
-            echo "RESTARTING AUTH SERVICE"
-            echo "======================================"
+            echo "Starting Auth Service..."
 
-            cd "$PROJECT_DIR/Backend/services/auth-service"
-
-            pm2 restart auth-service --update-env || \
             pm2 start npm \
               --name auth-service \
               --cwd "$PROJECT_DIR/Backend/services/auth-service" \
               -- start
 
+
             # ======================================
-            # Restart Category Service
+            # START CATEGORY SERVICE
             # ======================================
 
-            echo "======================================"
-            echo "RESTARTING CATEGORY SERVICE"
-            echo "======================================"
+            echo "Starting Category Service..."
 
-            cd "$PROJECT_DIR/Backend/services/category-service"
-
-            pm2 restart category-service --update-env || \
             pm2 start npm \
               --name category-service \
               --cwd "$PROJECT_DIR/Backend/services/category-service" \
               -- start
 
-            # ======================================
-            # Save PM2
-            # ======================================
 
-            echo "======================================"
-            echo "SAVING PM2 PROCESS LIST"
-            echo "======================================"
+            # ======================================
+            # SAVE PM2
+            # ======================================
 
             pm2 save
 
+
             # ======================================
-            # PM2 status
+            # STATUS
             # ======================================
 
             echo "======================================"
@@ -391,19 +357,21 @@ jobs:
 
             pm2 status
 
+
             # ======================================
-            # Final verification
+            # VERIFY
             # ======================================
 
             echo "======================================"
-            echo "VERIFYING APPLICATION"
+            echo "VERIFYING SERVICES"
             echo "======================================"
 
-            test -d "$PROJECT_DIR/Backend/gateway"
-            test -d "$PROJECT_DIR/Backend/services/auth-service"
-            test -d "$PROJECT_DIR/Backend/services/category-service"
+            pm2 describe gateway
 
-            echo "Application directories verified."
+            pm2 describe auth-service
+
+            pm2 describe category-service
+
 
             echo "======================================"
             echo "DEPLOYMENT COMPLETED SUCCESSFULLY"
